@@ -1,0 +1,21 @@
+replicaCount: 1
+
+image:
+  repository: production-platform-api
+  tag: "1.0"
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+
+config:
+  APP_ENV: dev
+  LOG_LEVEL: DEBUG
