@@ -60,4 +60,12 @@ jobs:
 
       - name: Package Helm chart
         run: |
-          helm package ./helm
+          helm package ./helm \
+            --destination ./artifacts
+
+      - name: Upload Helm chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-platform-helm-${{ github.sha }}
+          path: ./artifacts/*.tgz
+          if-no-files-found: error
