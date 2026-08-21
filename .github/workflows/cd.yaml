@@ -51,6 +51,13 @@ jobs:
           helm template production-platform ./helm \
             -f ./helm/values-prod.yaml
 
+      - name: Validate ECR image configuration
+        run: |
+          helm template production-platform ./helm \
+            -f ./helm/values-prod.yaml \
+            --set image.repository=799517508386.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY} \
+            --set image.tag=${GITHUB_SHA}
+
       - name: Package Helm chart
         run: |
           helm package ./helm
