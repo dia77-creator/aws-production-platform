@@ -19,3 +19,5 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+ecr-push-policy.json
+github-actions-trust-policy.json
