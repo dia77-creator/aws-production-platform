@@ -9,10 +9,18 @@ on:
     branches:
       - main
 
+# Required for GitHub OIDC when AWS publishing is enabled.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   cd:
     name: Build and Package
+
+    # Run CD only when CI completed successfully.
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
     runs-on: ubuntu-latest
 
     env:
@@ -20,25 +28,48 @@ jobs:
       AWS_ACCOUNT_ID: "799517508386"
       ECR_REPOSITORY: production-platform-api
 
-      # Safety switch:
-      # Keep false while practicing without AWS costs.
+      # ============================================================
+      # SAFETY SWITCH
+      # ============================================================
+      # Keep false while practicing.
+      #
+      # false = no AWS authentication
+      #         no ECR login
+      #         no ECR push
+      #
+      # true  = GitHub Actions assumes the IAM role
+      #         and pushes the Docker image to ECR
+      # ============================================================
       PUBLISH_IMAGE: "false"
 
     steps:
+
+      # ------------------------------------------------------------
+      # 1. Checkout source code
+      # ------------------------------------------------------------
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
           ref: main
 
+      # ------------------------------------------------------------
+      # 2. Set up Docker Buildx
+      # ------------------------------------------------------------
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # ------------------------------------------------------------
+      # 3. Build Docker image
+      # ------------------------------------------------------------
       - name: Build Docker image
         run: |
           docker build \
             -t production-platform-api:${{ github.sha }} \
             ./app
 
+      # ------------------------------------------------------------
+      # 4. Prepare ECR image reference
+      # ------------------------------------------------------------
       - name: Prepare ECR image reference
         run: |
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
@@ -48,6 +79,12 @@ jobs:
           echo "ECR repository: ${ECR_REPOSITORY}"
           echo "ECR image: ${ECR_IMAGE}"
 
+      # ------------------------------------------------------------
+      # 5. Configure AWS credentials using GitHub OIDC
+      # ------------------------------------------------------------
+      #
+      # This step does NOT run while PUBLISH_IMAGE=false.
+      #
       - name: Configure AWS credentials
         if: ${{ env.PUBLISH_IMAGE == 'true' }}
         uses: aws-actions/configure-aws-credentials@v4
@@ -55,10 +92,16 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
 
+      # ------------------------------------------------------------
+      # 6. Login to Amazon ECR
+      # ------------------------------------------------------------
       - name: Log in to Amazon ECR
         if: ${{ env.PUBLISH_IMAGE == 'true' }}
         uses: aws-actions/amazon-ecr-login@v2
 
+      # ------------------------------------------------------------
+      # 7. Tag Docker image for ECR
+      # ------------------------------------------------------------
       - name: Tag Docker image for ECR
         if: ${{ env.PUBLISH_IMAGE == 'true' }}
         run: |
@@ -68,6 +111,9 @@ jobs:
             production-platform-api:${GITHUB_SHA} \
             ${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}
 
+      # ------------------------------------------------------------
+      # 8. Push Docker image to ECR
+      # ------------------------------------------------------------
       - name: Push Docker image to ECR
         if: ${{ env.PUBLISH_IMAGE == 'true' }}
         run: |
@@ -76,25 +122,44 @@ jobs:
           docker push \
             ${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}
 
+      # ------------------------------------------------------------
+      # 9. Safety confirmation
+      # ------------------------------------------------------------
       - name: Confirm ECR publishing is disabled
         if: ${{ env.PUBLISH_IMAGE != 'true' }}
         run: |
-          echo "ECR publishing is disabled."
+          echo "=============================================="
+          echo "ECR publishing is DISABLED."
+          echo "=============================================="
           echo "No AWS authentication was performed."
+          echo "No ECR login was performed."
           echo "No Docker image was pushed to ECR."
+          echo "=============================================="
 
+      # ------------------------------------------------------------
+      # 10. Set up Helm
+      # ------------------------------------------------------------
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
+      # ------------------------------------------------------------
+      # 11. Lint Helm chart
+      # ------------------------------------------------------------
       - name: Lint Helm chart
         run: |
           helm lint ./helm
 
+      # ------------------------------------------------------------
+      # 12. Validate production Helm values
+      # ------------------------------------------------------------
       - name: Validate production Helm values
         run: |
           helm template production-platform ./helm \
             -f ./helm/values-prod.yaml
 
+      # ------------------------------------------------------------
+      # 13. Validate ECR image configuration
+      # ------------------------------------------------------------
       - name: Validate ECR image configuration
         run: |
           helm template production-platform ./helm \
@@ -102,6 +167,9 @@ jobs:
             --set image.repository=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY} \
             --set image.tag=${GITHUB_SHA}
 
+      # ------------------------------------------------------------
+      # 14. Package Helm chart
+      # ------------------------------------------------------------
       - name: Package Helm chart
         run: |
           mkdir -p ./artifacts
@@ -109,6 +177,9 @@ jobs:
           helm package ./helm \
             --destination ./artifacts
 
+      # ------------------------------------------------------------
+      # 15. Upload Helm chart as GitHub Actions artifact
+      # ------------------------------------------------------------
       - name: Upload Helm chart artifact
         uses: actions/upload-artifact@v4
         with:
