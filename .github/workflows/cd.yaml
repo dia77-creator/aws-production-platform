@@ -17,7 +17,12 @@ jobs:
 
     env:
       AWS_REGION: us-east-1
+      AWS_ACCOUNT_ID: "799517508386"
       ECR_REPOSITORY: production-platform-api
+
+      # Safety switch:
+      # Keep false while practicing without AWS costs.
+      PUBLISH_IMAGE: "false"
 
     steps:
       - name: Checkout source code
@@ -36,8 +41,47 @@ jobs:
 
       - name: Prepare ECR image reference
         run: |
-          echo "ECR image would be:"
-          echo "799517508386.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          ECR_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+
+          echo "ECR registry: ${ECR_REGISTRY}"
+          echo "ECR repository: ${ECR_REPOSITORY}"
+          echo "ECR image: ${ECR_IMAGE}"
+
+      - name: Configure AWS credentials
+        if: ${{ env.PUBLISH_IMAGE == 'true' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+
+      - name: Log in to Amazon ECR
+        if: ${{ env.PUBLISH_IMAGE == 'true' }}
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag Docker image for ECR
+        if: ${{ env.PUBLISH_IMAGE == 'true' }}
+        run: |
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          docker tag \
+            production-platform-api:${GITHUB_SHA} \
+            ${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}
+
+      - name: Push Docker image to ECR
+        if: ${{ env.PUBLISH_IMAGE == 'true' }}
+        run: |
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          docker push \
+            ${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}
+
+      - name: Confirm ECR publishing is disabled
+        if: ${{ env.PUBLISH_IMAGE != 'true' }}
+        run: |
+          echo "ECR publishing is disabled."
+          echo "No AWS authentication was performed."
+          echo "No Docker image was pushed to ECR."
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
@@ -55,11 +99,13 @@ jobs:
         run: |
           helm template production-platform ./helm \
             -f ./helm/values-prod.yaml \
-            --set image.repository=799517508386.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY} \
+            --set image.repository=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY} \
             --set image.tag=${GITHUB_SHA}
 
       - name: Package Helm chart
         run: |
+          mkdir -p ./artifacts
+
           helm package ./helm \
             --destination ./artifacts
 
